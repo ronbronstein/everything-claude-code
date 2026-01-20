@@ -116,13 +116,36 @@ From the repository's `examples/CLAUDE.md`:
 - E2E tests for critical flows
 ```
 
+### The Router Pattern: Keep CLAUDE.md Lean
+
+**Critical Insight:** CLAUDE.md should function as a **router**, not an encyclopedia. Keep it under 50-80 lines and link to detailed resources.
+
+**Why This Matters:**
+- Every line in CLAUDE.md consumes tokens on every conversation
+- Detailed workflows belong in `.claude/skills/` and `.claude/rules/`
+- Claude reads linked files on-demand, saving thousands of tokens per session
+
+**Router Pattern Example:**
+```markdown
+## Specialized Workflows
+*Read these only when performing the specific task:*
+
+| Task | Resource |
+|------|----------|
+| Refactoring | Read `.claude/skills/refactor-guide.md` |
+| Testing | Read `.claude/rules/testing.md` |
+| Database | Read `.claude/skills/db-migration.md` |
+| Security | Read `.claude/rules/security.md` |
+```
+
 ### Key Principles
 
-1. **Keep it under 150-200 instructions** - Research shows frontier LLMs follow this number reasonably well
-2. **Start simple, add friction-based** - Only add rules when you encounter actual problems
-3. **Be specific, not generic** - "Use immutable patterns" is better than "write good code"
-4. **Include file paths** - Reference actual project locations
-5. **Document commands** - List the exact commands to build, test, and deploy
+1. **Keep CLAUDE.md lean (50-80 lines)** - Use it as a router to detailed resources
+2. **Link, don't embed** - Put detailed workflows in `.claude/skills/` and `.claude/rules/`
+3. **Start simple, add friction-based** - Only add rules when you encounter actual problems
+4. **Be specific, not generic** - "Use immutable patterns" is better than "write good code"
+5. **Include file paths** - Reference actual project locations
+6. **Document commands** - List the exact commands to build, test, and deploy
 
 ---
 
@@ -139,6 +162,16 @@ Precedence (lowest to highest):
 3. .claude/settings.local.json    (Project personal, git-ignored)
 ```
 
+### The Three Permission Tiers
+
+Claude Code supports three permission levels for fine-grained control:
+
+| Tier | Behavior | Use Case |
+|------|----------|----------|
+| `allow` | Auto-approved, no prompt | High-frequency, safe operations |
+| `ask` | Requires user confirmation | Potentially impactful operations |
+| `deny` | Blocked entirely | Dangerous or sensitive operations |
+
 ### Permission Syntax
 
 ```json
@@ -149,18 +182,36 @@ Precedence (lowest to highest):
       "Skill",
       "Bash(npm run lint)",
       "Bash(npm run test:*)",
-      "Read(~/.zshrc)"
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Read"
+    ],
+    "ask": [
+      "Bash(git push)",
+      "Bash(npm install:*)",
+      "Edit(package.json)",
+      "Write(.github/workflows/*)"
     ],
     "deny": [
       "Bash(curl:*)",
       "Bash(rm -rf:*)",
-      "Read(./.env)",
-      "Read(./secrets/**)",
-      "Write(./node_modules/**)"
-    ]
+      "Bash(git push --force:*)",
+      "Read(./.env*)",
+      "Read(./secrets/**)"
+    ],
+    "defaultMode": "default"
   }
 }
 ```
+
+### Permission Modes (`defaultMode`)
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Prompts for permission on first use of each tool |
+| `acceptEdits` | Auto-accepts file edits, prompts for others |
+| `plan` | Planning mode - restricts code modifications |
+| `bypassPermissions` | Auto-accepts all (use with caution) |
 
 ### Permission Patterns
 
@@ -376,11 +427,34 @@ From `rules/performance.md`:
 | **Sonnet 4.5** | Main development, orchestration, complex coding | Standard |
 | **Opus 4.5** | Architectural decisions, deep reasoning, research | Premium |
 
-### Files to Ignore
+### Output Style Configuration
 
-Add to `.gitignore` patterns that Claude should skip:
+Control Claude's verbosity with the `outputStyle` setting:
 
+```json
+{
+  "outputStyle": "concise"
+}
 ```
+
+| Style | Behavior |
+|-------|----------|
+| `default` | Standard conversational output |
+| `concise` | Minimal output, less filler text |
+| `Explanatory` | More detailed explanations |
+| `Learning` | Educational mode with extra context |
+
+**Recommendation:** Use `"concise"` in production to reduce token waste from conversational filler like "I will now proceed to..."
+
+### Files to Exclude from Context
+
+**Important:** The `ignorePatterns` setting is **deprecated**. Use these alternatives:
+
+**1. `.gitignore` (Primary Method)**
+
+Files in `.gitignore` are typically excluded from Claude's context:
+
+```gitignore
 # Large generated files
 node_modules/
 .next/
@@ -402,12 +476,82 @@ pnpm-lock.yaml
 *.log
 ```
 
+**2. PreToolUse Hooks (For Enforcement)**
+
+Use hooks to block reads of specific files:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "tool == \"Read\" && tool_input.file_path matches \"package-lock\\.json$\"",
+      "hooks": [{
+        "type": "command",
+        "command": "#!/bin/bash\necho '[Hook] BLOCKED: Lock files waste tokens' >&2\nexit 2"
+      }],
+      "description": "Block reading lock files"
+    }]
+  }
+}
+```
+
 ### Session Management Tips
 
 1. **Use `/clear` often** - Start fresh between unrelated tasks
 2. **Don't accumulate history** - Old context wastes tokens
 3. **Compact conversations** - Claude will auto-summarize if needed
 4. **Use subagents** - Delegate to focused agents with limited scope
+
+### Self-Maintenance Pattern: External Long-Term Memory
+
+Create a `docs/architecture/` directory that serves as **persistent memory** across sessions. This pattern ensures architectural decisions and project state survive session resets.
+
+**Directory Structure:**
+```
+docs/
+└── architecture/
+    ├── current-state.md      # Current system state (auto-updated)
+    ├── decisions/            # Architecture Decision Records (ADRs)
+    │   ├── 001-auth-system.md
+    │   └── 002-database-choice.md
+    └── plans/                # Implementation plans
+        └── active-plan.md
+```
+
+**The `current-state.md` Template:**
+```markdown
+# Current System State
+
+*Last updated: [DATE] by Claude*
+
+## Active Features
+- [Feature 1]: [Status - Complete/In Progress/Planned]
+- [Feature 2]: [Status]
+
+## Recent Changes
+- [DATE]: [Change description]
+- [DATE]: [Change description]
+
+## Known Issues
+- [ ] [Issue 1]
+- [ ] [Issue 2]
+
+## Next Steps
+1. [Next task]
+2. [Following task]
+```
+
+**Enforcement Rule (add to CLAUDE.md):**
+```markdown
+## Self-Maintenance Rule
+
+After completing ANY significant change:
+1. Update `docs/architecture/current-state.md` with what changed
+2. If architectural decision was made, create ADR in `docs/architecture/decisions/`
+3. Update "Recent Changes" section with date and description
+```
+
+This creates an external "brain" that persists across session boundaries, allowing Claude to quickly understand project state without re-analyzing the entire codebase.
 
 ---
 
@@ -789,7 +933,29 @@ From `mcp-configs/mcp-servers.json`:
 mkdir -p ~/.claude/{agents,skills,commands,rules,hooks}
 
 # Create project-level config directory
-mkdir -p .claude/{commands,settings}
+mkdir -p .claude/{commands,skills,rules}
+
+# Create external long-term memory directory
+mkdir -p docs/architecture/{decisions,plans}
+
+# Initialize current-state.md
+cat > docs/architecture/current-state.md << 'EOF'
+# Current System State
+
+*Last updated: [DATE] by Claude*
+
+## Active Features
+- [Feature]: [Status]
+
+## Recent Changes
+- [DATE]: Initial setup
+
+## Known Issues
+- [ ] None yet
+
+## Next Steps
+1. [First task]
+EOF
 ```
 
 ### Complete Directory Structure
@@ -832,8 +998,15 @@ your-project/                       # Project-level
 ├── .claude/
 │   ├── settings.json               # Project shared config
 │   ├── settings.local.json         # Personal (git-ignored)
-│   └── commands/                   # Project-specific commands
-├── CLAUDE.md                       # Project context (CRITICAL)
+│   ├── commands/                   # Project-specific commands
+│   ├── skills/                     # Project-specific workflows
+│   └── rules/                      # Project-specific rules
+├── CLAUDE.md                       # Project context (LEAN ROUTER)
+├── docs/
+│   └── architecture/               # External long-term memory
+│       ├── current-state.md        # Auto-updated project state
+│       ├── decisions/              # Architecture Decision Records
+│       └── plans/                  # Implementation plans
 ├── src/
 │   ├── app/                        # Application code
 │   ├── components/                 # UI components
@@ -914,15 +1087,62 @@ You are successful when:
 - User requirements are met
 ```
 
-### Project-Level CLAUDE.md Template
+### Project-Level CLAUDE.md Template (Lean Router Pattern)
 
-Copy and customize this for each project:
+This template follows the router pattern - keep it under 50-80 lines and link to detailed resources.
 
 ```markdown
 # Project: [YOUR PROJECT NAME]
 
 ## Overview
+[One sentence: what this project does and why]
 
+**Stack:** [Framework], [Language], [Database], [Key Libraries]
+
+## Architecture Map
+*Do not hallucinate files outside this structure:*
+```
+src/
+├── app/           # [Purpose]
+├── components/    # [Purpose]
+├── lib/           # [Purpose]
+└── types/         # [Purpose]
+```
+
+## Commands (The "Truth")
+- **Dev:** `npm run dev` (use tmux!)
+- **Test:** `npm test` (MUST pass before commit)
+- **Lint:** `npm run lint`
+- **Build:** `npm run build`
+
+## Specialized Workflows
+*Read these only when performing the specific task:*
+
+| Task | Resource |
+|------|----------|
+| Testing/TDD | Read `.claude/rules/testing.md` |
+| Security | Read `.claude/rules/security.md` |
+| Refactoring | Read `.claude/skills/refactor-guide.md` |
+| Database | Read `.claude/skills/db-migration.md` |
+
+## Imperative Rules
+1. **No broken builds** - Fix compilation errors immediately
+2. **TDD required** - Write tests before implementation
+3. **Plan first** - If touching >2 files, update `docs/architecture/plans/`
+4. **Update state** - After significant changes, update `docs/architecture/current-state.md`
+
+## Project State
+Current state and decisions: `docs/architecture/current-state.md`
+```
+
+### Detailed Project CLAUDE.md (Alternative)
+
+For projects that need more inline context, use this expanded version:
+
+```markdown
+# Project: [YOUR PROJECT NAME]
+
+## Overview
 [Brief description - 2-3 sentences about what this project does]
 
 **Tech Stack:**
@@ -931,109 +1151,29 @@ Copy and customize this for each project:
 - Database: [e.g., PostgreSQL, Supabase]
 - Testing: [e.g., Jest, Playwright]
 
-## File Structure
-
-```
-src/
-├── app/              # [Description]
-├── components/       # [Description]
-├── hooks/            # [Description]
-├── lib/              # [Description]
-└── types/            # [Description]
-```
-
-## Build & Test Commands
-
-```bash
-# Development
-npm run dev           # Start dev server (use tmux!)
-
-# Testing
-npm run test          # Run unit tests
-npm run test:e2e      # Run E2E tests
-npm run test:coverage # Generate coverage report
-
-# Quality
-npm run lint          # Run linter
-npm run type-check    # TypeScript validation
-npm run build         # Production build
-```
+## Commands
+- `npm run dev` - Start dev server (use tmux!)
+- `npm run test` - Run unit tests
+- `npm run lint` - Run linter
+- `npm run build` - Production build
 
 ## Critical Rules
-
-### 1. Code Organization
-- Many small files over few large files
-- 200-400 lines typical, 800 max per file
-- Organize by feature/domain, not by type
-
-### 2. Code Style
-- No emojis in code, comments, or documentation
-- Immutability always - never mutate objects or arrays
-- No console.log in production code
-- Proper error handling with try/catch
-- Input validation with Zod
-
-### 3. Testing (TDD Required)
-- Write tests BEFORE implementation
+- Many small files (200-400 lines, 800 max)
+- No emojis in code or comments
+- Immutability always - never mutate
+- TDD: Write tests before implementation
 - 80% minimum coverage
-- Unit tests for utilities
-- Integration tests for APIs
-- E2E tests for critical flows
+- No hardcoded secrets
 
-### 4. Security
-- No hardcoded secrets - use environment variables
-- Validate all user inputs
-- Parameterized queries only
-- CSRF protection enabled
+## Specialized Workflows
+| Task | Resource |
+|------|----------|
+| Testing | `.claude/rules/testing.md` |
+| Security | `.claude/rules/security.md` |
+| Code Style | `.claude/rules/coding-style.md` |
 
-## Key Patterns
-
-### API Response Format
-
-```typescript
-interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-}
-```
-
-### Error Handling
-
-```typescript
-try {
-  const result = await operation()
-  return { success: true, data: result }
-} catch (error) {
-  console.error('Operation failed:', error)
-  return { success: false, error: 'User-friendly message' }
-}
-```
-
-## Environment Variables
-
-```bash
-# Required
-DATABASE_URL=
-API_KEY=
-
-# Optional
-DEBUG=false
-```
-
-## Available Commands
-
-- `/tdd` - Test-driven development workflow
-- `/plan` - Create implementation plan
-- `/code-review` - Review code quality
-- `/build-fix` - Fix build errors
-
-## Git Workflow
-
-- Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`
-- Never commit to main directly
-- PRs require review
-- All tests must pass before merge
+## Self-Maintenance
+After significant changes, update `docs/architecture/current-state.md`
 ```
 
 ---
@@ -1045,6 +1185,7 @@ DEBUG=false
 ```json
 {
   "$schema": "https://json-schema.org/claude-code-settings.json",
+  "outputStyle": "concise",
   "permissions": {
     "allow": [
       "Skill",
@@ -1056,7 +1197,14 @@ DEBUG=false
       "Bash(git diff)",
       "Bash(git add .)",
       "Bash(git commit:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Read"
+    ],
+    "ask": [
+      "Bash(git push)",
+      "Bash(npm install:*)",
+      "Edit(package.json)",
+      "Write(.github/workflows/*)"
     ],
     "deny": [
       "Bash(rm -rf:*)",
@@ -1065,7 +1213,8 @@ DEBUG=false
       "Bash(git push --force:*)",
       "Read(./.env*)",
       "Read(./secrets/**)"
-    ]
+    ],
+    "defaultMode": "default"
   },
   "hooks": {
     "PreToolUse": [
@@ -1387,21 +1536,24 @@ Create `setup-claude-code.sh`:
 
 echo "Setting up Claude Code configuration..."
 
-# Create directories
+# Create user-level directories
 mkdir -p ~/.claude/{agents,skills,commands,rules,hooks}
 
-# Create basic settings.json
+# Create settings.json with three-tier permissions
 cat > ~/.claude/settings.json << 'EOF'
 {
   "$schema": "https://json-schema.org/claude-code-settings.json",
+  "outputStyle": "concise",
   "permissions": {
-    "allow": ["Skill", "Bash(npm run:*)", "Bash(git:*)"],
-    "deny": ["Bash(rm -rf:*)", "Read(./.env*)"]
+    "allow": ["Skill", "Bash(npm run:*)", "Bash(git status)", "Bash(git diff)", "Read"],
+    "ask": ["Bash(git push)", "Bash(npm install:*)", "Edit(package.json)"],
+    "deny": ["Bash(rm -rf:*)", "Bash(git push --force:*)", "Read(./.env*)"],
+    "defaultMode": "default"
   }
 }
 EOF
 
-# Create basic CLAUDE.md
+# Create lean CLAUDE.md (router pattern)
 cat > ~/.claude/CLAUDE.md << 'EOF'
 # Claude Code Configuration
 
@@ -1411,14 +1563,83 @@ cat > ~/.claude/CLAUDE.md << 'EOF'
 - Never compromise on security
 - Prefer immutability
 
-## Code Style
-- No emojis
-- Many small files (200-400 lines)
-- Conventional commits
+## Modular Rules
+| Rule | Location |
+|------|----------|
+| Security | `~/.claude/rules/security.md` |
+| Code Style | `~/.claude/rules/coding-style.md` |
+| Testing | `~/.claude/rules/testing.md` |
+
+## Self-Maintenance
+After significant changes, update `docs/architecture/current-state.md`
 EOF
 
-echo "Setup complete! Configuration at ~/.claude/"
-echo "Next: Create project-level CLAUDE.md in your project root"
+echo "User-level setup complete at ~/.claude/"
+echo ""
+echo "For each project, run:"
+echo "  mkdir -p .claude/{commands,skills,rules}"
+echo "  mkdir -p docs/architecture/{decisions,plans}"
+echo "  touch CLAUDE.md docs/architecture/current-state.md"
+```
+
+### Project Setup Script
+
+Create `setup-project-claude.sh` for new projects:
+
+```bash
+#!/bin/bash
+
+echo "Setting up Claude Code for this project..."
+
+# Create project directories
+mkdir -p .claude/{commands,skills,rules}
+mkdir -p docs/architecture/{decisions,plans}
+
+# Create lean project CLAUDE.md
+cat > CLAUDE.md << 'EOF'
+# Project: [PROJECT NAME]
+
+## Overview
+[One sentence description]
+
+**Stack:** [Framework], [Language], [Database]
+
+## Commands
+- `npm run dev` - Dev server (use tmux!)
+- `npm test` - Run tests (MUST pass)
+- `npm run lint` - Linter
+- `npm run build` - Build
+
+## Workflows
+| Task | Resource |
+|------|----------|
+| Testing | `.claude/rules/testing.md` |
+| Security | `.claude/rules/security.md` |
+
+## Rules
+1. TDD required - tests before code
+2. Plan first if touching >2 files
+3. Update `docs/architecture/current-state.md` after changes
+EOF
+
+# Create current-state.md
+cat > docs/architecture/current-state.md << 'EOF'
+# Current System State
+
+*Last updated: [DATE]*
+
+## Active Features
+- [ ] Initial setup
+
+## Recent Changes
+- [DATE]: Project initialized
+
+## Next Steps
+1. Define core architecture
+EOF
+
+echo "Project setup complete!"
+echo "Edit CLAUDE.md and docs/architecture/current-state.md"
 ```
 
 ---
